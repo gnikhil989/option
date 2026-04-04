@@ -1,6 +1,6 @@
 """
-Option Chain Manager Module
-Real-time option chain management for NIFTY and BANKNIFTY with market depth
+Option Chain Manager Module V4
+Real-time option chain management for NIFTY and BANKNIFTY with configurable subscription mode (Quote/Depth)
 """
 
 import json
@@ -18,10 +18,10 @@ import pytz
 logger = logging.getLogger(__name__)
 
 
-class OptionChainCache:
+class OptionChainCacheV4:
     """Zero-config cache for option chain data"""
     
-    def __init__(self, maxsize=100, ttl=45):
+    def __init__(self, maxsize=100, ttl=30):
         self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
         self.lock = threading.Lock()
     
@@ -34,17 +34,23 @@ class OptionChainCache:
             self.cache[key] = value
 
 
-class OptionChainManager:
+class OptionChainManagerV4:
     """
-    Manager class for option chain with market depth
+    Manager class for option chain with configurable subscription mode
     Handles both LTP and bid/ask data for order management
     """
     
     def __init__(self, underlying, expiry, websocket_manager=None):
+        """
+        Initialize OptionChainManagerV4
+        :param underlying: 'RELIANCE', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'HDFCBANK', 'ICICIBANK', 'AXISBANK', 'INFY', 'YESBANK', 'HDFCBANK', 'ICICIBANK', 'AXISBANK', 'BHARTIARTL', 'YESBANK'
+        :param expiry: Expiry date string or object
+        :param websocket_manager: WebSocket manager instance
+        """
         self.underlying = underlying
         self.expiry = expiry
         if underlying == 'NIFTY':
-            self.strike_step = 100
+            self.strike_step = 50
         elif underlying in ['BANKNIFTY', 'SENSEX']:
             self.strike_step = 100
         else:
@@ -52,18 +58,25 @@ class OptionChainManager:
         self.option_data = {}
         self.subscription_map = {}
         self.underlying_ltp = 0
-        self.underlying_ohlc = {'open':0,'high':0,'low':0,'close':0,'avg':0}
         self.underlying_bid = 0
         self.underlying_ask = 0
+        # New OHLC fields for underlying instrument
+        self.underlying_open = 0
+        self.underlying_high = 0
+        self.underlying_low = 0
+        self.underlying_close = 0
+        self.underlying_avg = 0
         self.atm_strike = 0
         self.websocket_manager = websocket_manager
-        self.cache = OptionChainCache()
+        self.cache = OptionChainCacheV4()
         self.monitoring_active = False
         self.initialized = False
-        self.manager_id = f"{underlying}_{expiry}"
+        self.manager_id = f"{underlying}_{expiry}_v4"
+        self.option_mode = 'quote'  # Forced Quote Mode
+        logger.info(f"Initialized OptionChainManagerV4 for {underlying} (Quote Mode Only)")
     
     def initialize(self, api_client):
-        """Setup option chain with depth subscriptions"""
+        """Setup option chain with subscriptions"""
         if self.initialized:
             logger.info(f"Option chain already initialized for {self.underlying}")
             return True
@@ -71,7 +84,7 @@ class OptionChainManager:
         self.api_client = api_client
         self.calculate_atm()
         self.generate_strikes()
-        self.setup_depth_subscriptions()
+        self.setup_subscriptions()
         self.initialized = True
         return True
     
@@ -86,7 +99,12 @@ class OptionChainManager:
                 return self.atm_strike
             
             # Otherwise fetch underlying quote from API
-            exchange = 'BSE_INDEX' if self.underlying == 'SENSEX' else 'NSE_INDEX'
+                if self.underlying == 'SENSEX':
+                    exchange = 'BSE_INDEX'
+                elif self.underlying == 'NIFTY':
+                    exchange = 'NSE_INDEX'
+                else:
+                    exchange = 'NSE'
             response = self.api_client.quotes(symbol=self.underlying, exchange=exchange)
             
             if response.get('status') == 'success':
@@ -118,9 +136,8 @@ class OptionChainManager:
             return
         
         strikes = []
-        
         # Generate ITM strikes (20 strikes below ATM for CE, above for PE)
-        for i in range(15, 0, -1):
+        for i in range(5, 0, -1):
             strike = self.atm_strike - (i * self.strike_step)
             strikes.append({
                 'strike': strike,
@@ -136,7 +153,7 @@ class OptionChainManager:
         })
         
         # Generate OTM strikes (20 strikes above ATM for CE, below for PE)
-        for i in range(1, 16):
+        for i in range(1, 6):
             strike = self.atm_strike + (i * self.strike_step)
             strikes.append({
                 'strike': strike,
@@ -156,15 +173,25 @@ class OptionChainManager:
                 'ce_data': {
                     'ltp': 0, 'bid': 0, 'ask': 0, 'bid_qty': 0,
                     'ask_qty': 0, 'spread': 0, 'volume': 0, 'oi': 0,
-                    'open': 0, 'high': 0, 'low': 0, 'close': 0, 'avg': 0
+                    'open': 0, 'high': 0, 'low': 0, 'close': 0, 'avg_price': 0
                 },
                 'pe_data': {
                     'ltp': 0, 'bid': 0, 'ask': 0, 'bid_qty': 0,
                     'ask_qty': 0, 'spread': 0, 'volume': 0, 'oi': 0,
-                    'open': 0, 'high': 0, 'low': 0, 'close': 0, 'avg': 0
-                },
+                    'open': 0, 'high': 0, 'low': 0, 'close': 0, 'avg_price': 0
+                }
             }
-            
+            # Initialize Greeks with 0
+            self.option_data[strike]['ce_data'].update({
+                'delta': 0, 'gamma': 0, 'theta': 0, 'vega': 0, 'rho': 0, 'iv': 0
+            })
+            self.option_data[strike]['pe_data'].update({
+                'delta': 0, 'gamma': 0, 'theta': 0, 'vega': 0, 'rho': 0, 'iv': 0
+            })
+
+            # Fetch Greeks
+            # self._update_greeks_for_strike(strike)
+
             # Map symbols to strikes for quick lookup
             self.subscription_map[self.option_data[strike]['ce_symbol']] = {
                 'strike': strike, 'type': 'CE'
@@ -174,6 +201,96 @@ class OptionChainManager:
             }
         
         logger.info(f"Generated {len(strikes)} strikes for {self.underlying}. ATM: {self.atm_strike}")
+
+    def _update_greeks_for_strike(self, strike):
+        """Fetch and update Greeks for a specific strike with rate limiting"""
+        if strike not in self.option_data:
+            return
+
+        try:
+            # CE Greeks
+            ce_symbol = self.option_data[strike]['ce_symbol']
+            logger.info(f"Fetching Greeks for {ce_symbol}")
+            ce_response = self.api_client.optiongreeks(symbol=ce_symbol, exchange='NFO')
+            
+            if ce_response and ce_response.get('status') == 'success':
+                greeks = ce_response.get('greeks', {})
+                self.option_data[strike]['ce_data'].update({
+                    'delta': float(greeks.get('delta', 0) or 0),
+                    'gamma': float(greeks.get('gamma', 0) or 0),
+                    'theta': float(greeks.get('theta', 0) or 0),
+                    'vega': float(greeks.get('vega', 0) or 0),
+                    'rho': float(greeks.get('rho', 0) or 0),
+                    'iv': float(ce_response.get('implied_volatility', 0) or 0)
+                })
+            
+            # Rate limit delay (30 requests/min = 1 req / 2 sec)
+            for _ in range(21):
+                if not self.monitoring_active: return
+                time.sleep(0.1)
+
+
+            # PE Greeks
+            pe_symbol = self.option_data[strike]['pe_symbol']
+            logger.info(f"Fetching Greeks for {pe_symbol}")
+            pe_response = self.api_client.optiongreeks(symbol=pe_symbol, exchange='NFO')
+            
+            if pe_response and pe_response.get('status') == 'success':
+                greeks = pe_response.get('greeks', {})
+                self.option_data[strike]['pe_data'].update({
+                    'delta': float(greeks.get('delta', 0) or 0),
+                    'gamma': float(greeks.get('gamma', 0) or 0),
+                    'theta': float(greeks.get('theta', 0) or 0),
+                    'vega': float(greeks.get('vega', 0) or 0),
+                    'rho': float(greeks.get('rho', 0) or 0),
+                    'iv': float(pe_response.get('implied_volatility', 0) or 0)
+                })
+
+            # Rate limit delay
+            for _ in range(21):
+                if not self.monitoring_active: return
+                time.sleep(0.1)
+
+
+        except Exception as e:
+            logger.error(f"Error fetching Greeks for strike {strike}: {e}")
+
+    def refresh_greeks(self):
+        """Refresh Greeks for all strikes"""
+        # Create a copy of keys to avoid modification during iteration issues (though strikes shouldn't change often)
+        strikes = list(self.option_data.keys())
+        
+        # Sort strikes to update ATM/Near-ATM first (better UX)
+        if self.atm_strike:
+            strikes.sort(key=lambda x: abs(x - self.atm_strike))
+
+        for strike in strikes:
+            if not self.monitoring_active: # Break early if stopped
+                break
+            self._update_greeks_for_strike(strike)
+            # Small sleep to be nice to the API? 
+            # With 40 strikes (80 calls), we don't want to flood too hard.
+            # But we want it fast. Let's rely on sequential execution speed.
+
+    def _greek_monitor_loop(self):
+        """Background loop to refresh Greeks periodically"""
+        logger.info(f"Starting Greek monitoring loop for {self.underlying}")
+        while self.monitoring_active:
+            try:
+                start_time = time.time()
+                self.refresh_greeks()
+                elapsed = time.time() - start_time
+                logger.debug(f"Greeks refreshed in {elapsed:.2f}s")
+                
+                # Wait for 10 seconds before next update, but check active status
+                sleep_time = 10
+                for _ in range(sleep_time):
+                    if not self.monitoring_active:
+                        break
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"Error in Greek monitoring loop: {e}")
+                time.sleep(5) # Backoff on error
     
     def construct_option_symbol(self, strike, option_type):
         """Construct OpenAlgo option symbol"""
@@ -224,14 +341,14 @@ class OptionChainManager:
         
         return symbol
     
-    def setup_depth_subscriptions(self):
+    def setup_subscriptions(self):
         """Configure WebSocket subscriptions"""
         if not self.websocket_manager:
             logger.warning("WebSocket manager not available for subscriptions")
             return
         
         # Register handlers
-        self.websocket_manager.register_handler('depth', self.handle_depth_update)
+        # Force 'quote' handler
         self.websocket_manager.register_handler('quote', self.handle_quote_update)
         
         # Subscribe to underlying
@@ -250,9 +367,9 @@ class OptionChainManager:
             else:
                 exchange = 'NSE'
             subscription = {
-                'exchange': exchange,
-                'symbol': self.underlying,
-                'mode': 'quote'
+            'exchange': exchange,
+            'symbol': self.underlying,
+            'mode': 'quote'
             }
             self.websocket_manager.subscribe(subscription)
     
@@ -267,44 +384,77 @@ class OptionChainManager:
             instruments.append({'symbol': strike_data['ce_symbol'], 'exchange': exchange})
             instruments.append({'symbol': strike_data['pe_symbol'], 'exchange': exchange})
         
-        self.websocket_manager.subscribe_batch(instruments, mode='depth')
+        # Locked to 'quote' mode
+        self.websocket_manager.subscribe_batch(instruments, mode='quote')
+        logger.info(f"Subscribed to {len(instruments)} instruments in 'quote' mode")
     
     def handle_quote_update(self, data):
-        """Handle quote updates for underlying index"""
+        """Handle quote updates for underlying index and options"""
         symbol = data.get('symbol', '')
         
+        # 1. Handle Underlying Update
         if symbol == self.underlying:
-            ltp = data.get('ltp', 0)
-            if ltp:
-                self.underlying_ltp = float(ltp)
-                # Capture OHLC if provided
-                self.underlying_ohlc['open'] = float(data.get('open', self.underlying_ohlc['open']) or self.underlying_ohlc['open'])
-                self.underlying_ohlc['high'] = float(data.get('high', self.underlying_ohlc['high']) or self.underlying_ohlc['high'])
-                self.underlying_ohlc['low'] = float(data.get('low', self.underlying_ohlc['low']) or self.underlying_ohlc['low'])
-                self.underlying_ohlc['close'] = float(data.get('close', self.underlying_ohlc['close']) or self.underlying_ohlc['close'])
-                # Average price could be provided or computed
-                if 'avg' in data:
-                    self.underlying_ohlc['avg'] = float(data.get('avg', self.underlying_ohlc['avg']))
+            # Capture OHLC and avg for underlying
+            self.underlying_ltp = float(data.get('ltp', 0) or 0)
+            self.underlying_bid = float(data.get('bid', 0) or 0)
+            self.underlying_ask = float(data.get('ask', 0) or 0)
+            self.underlying_open = float(data.get('open', 0) or 0)
+            self.underlying_high = float(data.get('high', 0) or 0)
+            self.underlying_low = float(data.get('low', 0) or 0)
+            self.underlying_close = float(data.get('close', 0) or 0)
+            # Average price: use provided or compute from high/low
+            if 'average_price' in data:
+                self.underlying_avg = float(data.get('average_price', 0) or 0)
+            else:
+                self.underlying_avg = (self.underlying_high + self.underlying_low) / 2 if (self.underlying_high and self.underlying_low) else 0
+            # Update ATM strike based on new spot price
+            old_atm = self.atm_strike
+            # ceGreek= self.construct_option_symbol(old_atm, 'CE')
+            # peGreek= self.construct_option_symbol(old_atm, 'PE')
+            # logger.warning(f"generate_strikes called for {self.underlying}, ATM: {self.atm_strike}")
+            # ceResponse = self.api_client.optiongreeks(symbol=ceGreek, exchange='NFO')
+            # peResponse = self.api_client.optiongreeks(symbol=peGreek, exchange='NFO')
+            # logger.warning(f"ceResponse: {ceResponse}")
+            # logger.warning(f"peResponse: {peResponse}")
+            self.atm_strike = self.calculate_atm()
+            if old_atm != self.atm_strike:
+                if not self.option_data:
+                    self.generate_strikes()
+                    if self.websocket_manager and getattr(self.websocket_manager, 'authenticated', False):
+                        self.batch_subscribe_options()
                 else:
-                    # simple avg of high and low if not provided
-                    if self.underlying_ohlc['high'] and self.underlying_ohlc['low']:
-                        self.underlying_ohlc['avg'] = (self.underlying_ohlc['high'] + self.underlying_ohlc['low']) / 2
-                # Update ATM strike based on new spot price
-                old_atm = self.atm_strike
-                self.atm_strike = self.calculate_atm()
-                
-                if old_atm != self.atm_strike:
-                    # If strikes haven't been generated yet, generate them now
-                    if not self.option_data:
-                        self.generate_strikes()
-                        if self.websocket_manager and self.websocket_manager.authenticated:
-                            self.batch_subscribe_options()
-                    else:
-                        self.update_option_tags()
-                
-                self.underlying_bid = float(data.get('bid', 0) or 0)
-                self.underlying_ask = float(data.get('ask', 0) or 0)
-    
+                    self.update_option_tags()
+            return
+
+        # 2. Handle Option Update (if subscribed in quote mode)
+        if symbol in self.subscription_map:
+            strike_info = self.subscription_map[symbol]
+            option_type = strike_info['type']
+            strike = strike_info['strike']
+            
+            # Map quote fields to depth-like structure based on user provided sample
+            # keys: bid_price, ask_price, bid_size, ask_size
+            quote_data = {
+                'ltp': float(data.get('ltp', 0) or 0),
+                'bid': float(data.get('bid_price', data.get('bid', 0)) or 0),
+                'ask': float(data.get('ask_price', data.get('ask', 0)) or 0),
+                'bid_qty': int(data.get('bid_size', data.get('buy_quantity', 0)) or 0),
+                'ask_qty': int(data.get('ask_size', data.get('sell_quantity', 0)) or 0),
+                'spread': 0,
+                'volume': int(data.get('volume', 0) or 0),
+                'oi': int(data.get('oi', 0) or 0),
+                'open': float(data.get('open', 0) or 0),
+                'high': float(data.get('high', 0) or 0),
+                'low': float(data.get('low', 0) or 0),
+                'close': float(data.get('close', 0) or 0),
+                'avg_price': float(data.get('average_price', 0) or 0)
+            }
+
+            if quote_data['bid'] > 0 and quote_data['ask'] > 0:
+                quote_data['spread'] = quote_data['ask'] - quote_data['bid']
+            
+            self.update_option_depth(strike, option_type, quote_data)
+
     def handle_depth_update(self, data):
         """Process incoming depth data for options"""
         symbol = data.get('symbol') or data.get('Symbol') or data.get('trading_symbol') or ''
@@ -354,31 +504,41 @@ class OptionChainManager:
                 'ask_qty': int(ask_qty) if ask_qty else 0,
                 'spread': 0,
                 'volume': int(data.get('volume', 0) or 0),
-                'oi': int(data.get('oi', 0) or 0)
+                'oi': int(data.get('oi', 0) or 0),
+                'open': float(data.get('open', 0) or 0),
+                'high': float(data.get('high', 0) or 0),
+                'low': float(data.get('low', 0) or 0),
+                'close': float(data.get('close', 0) or 0),
+                'avg_price': float(data.get('average_price', 0) or 0)
             }
             
             if depth_data['bid'] > 0 and depth_data['ask'] > 0:
                 depth_data['spread'] = depth_data['ask'] - depth_data['bid']
             
-            # Include OHLC if present in depth data
-        depth_data['open'] = float(data.get('open', 0) or 0)
-        depth_data['high'] = float(data.get('high', 0) or 0)
-        depth_data['low'] = float(data.get('low', 0) or 0)
-        depth_data['close'] = float(data.get('close', 0) or 0)
-        if 'avg' in data:
-            depth_data['avg'] = float(data.get('avg', 0) or 0)
-        else:
-            if depth_data['high'] and depth_data['low']:
-                depth_data['avg'] = (depth_data['high'] + depth_data['low']) / 2
-        self.update_option_depth(strike, option_type, depth_data)
+            self.update_option_depth(strike, option_type, depth_data)
     
     def update_option_depth(self, strike, option_type, depth_data):
-        """Update option chain with depth data"""
+        """Update option chain with depth data, merging to prevent data loss"""
         if strike in self.option_data:
-            if option_type == 'CE':
-                self.option_data[strike]['ce_data'] = depth_data
-            else:
-                self.option_data[strike]['pe_data'] = depth_data
+            target = 'ce_data' if option_type == 'CE' else 'pe_data'
+            current_data = self.option_data[strike][target]
+            
+            # Debug log for volume/oi changes on a specific strike (e.g., ATM)
+            is_trace_strike = strike == self.atm_strike
+            
+            # Merge new data into existing
+            for key, value in depth_data.items():
+                # Prevent overwriting existing valid Volume/OI with 0
+                if key in ['volume', 'oi', 'oid'] and value == 0:
+                     if current_data.get(key, 0) > 0:
+                         if is_trace_strike:
+                             logger.debug(f"[MERGE SKIP] Strike {strike} {option_type} {key}: New={value}, Current={current_data.get(key)}")
+                         continue
+                
+                if is_trace_strike and key == 'volume' and value > 0 and value != current_data.get('volume', 0):
+                    logger.debug(f"[UPDATE] Strike {strike} {option_type} Volume: {current_data.get('volume')} -> {value}")
+
+                current_data[key] = value
     
     def get_option_chain(self):
         """Return formatted option chain data"""
@@ -387,12 +547,17 @@ class OptionChainManager:
             'underlying_ltp': self.underlying_ltp,
             'underlying_bid': self.underlying_bid,
             'underlying_ask': self.underlying_ask,
+            'underlying_open': self.underlying_open,
+            'underlying_high': self.underlying_high,
+            'underlying_low': self.underlying_low,
+            'underlying_close': self.underlying_close,
+            'underlying_avg': self.underlying_avg,
             'atm_strike': self.atm_strike,
             'expiry': self.expiry,
             'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
             'options': list(self.option_data.values()),
             'market_metrics': self.calculate_market_metrics(),
-            'spot_ohlc': self.underlying_ohlc
+            'mode': self.option_mode # Expose current mode
         }
         logger.debug(f"get_option_chain returning: {len(data['options'])} options, ATM: {data['atm_strike']}")
         return data
@@ -407,10 +572,10 @@ class OptionChainManager:
     
     def calculate_market_metrics(self):
         """Calculate PCR and other metrics"""
-        logger.debug(f"calculate_market_metrics: {self.option_data}")
+        # logger.debug(f"calculate_market_metrics: {self.option_data}")
         total_ce_volume = sum(opt['ce_data'].get('volume', 0) for opt in self.option_data.values())
         total_pe_volume = sum(opt['pe_data'].get('volume', 0) for opt in self.option_data.values())
-        total_ce_oi = sum(opt['ce_data'].get('oi', 0) for opt in self.option_data.values())
+        total_ce_oi = (sum(opt['ce_data'].get('oi', 0) for opt in self.option_data.values()))
         total_pe_oi = sum(opt['pe_data'].get('oi', 0) for opt in self.option_data.values())
         
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
@@ -421,7 +586,7 @@ class OptionChainManager:
             'total_volume': total_ce_volume + total_pe_volume,
             'total_ce_oi': total_ce_oi,
             'total_pe_oi': total_pe_oi,
-            'pcr': round(pcr, 2)
+            'pcr': round(pcr, 8)
         }
 
     def get_strike_position(self, strike):
@@ -438,7 +603,14 @@ class OptionChainManager:
             return f'ITM{abs(position)}'
     
     def start_monitoring(self):
+        if self.monitoring_active:
+            return
         self.monitoring_active = True
+        
+        # Start Greek refresh thread
+        self.greek_thread = threading.Thread(target=self._greek_monitor_loop)
+        self.greek_thread.daemon = True
+        self.greek_thread.start()
     
     def stop_monitoring(self):
         self.monitoring_active = False

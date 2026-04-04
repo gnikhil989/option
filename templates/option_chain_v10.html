@@ -1,0 +1,1642 @@
+{% extends "layout.html" %}
+
+{% block title %}Option Chain v10{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold flex items-center gap-3">
+            Option Chain v10
+            <span class="badge badge-success badge-lg gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                    class="inline-block w-4 h-4 stroke-current">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                SAFE GUARDIAN ACTIVE
+            </span>
+        </h1>
+        <div class="flex gap-2">
+            <select id="underlyingSelect" class="select select-bordered">
+                <option value="RELIANCE" {% if underlying=='RELIANCE' %}selected{% endif %}>RELIANCE</option>
+                <option value="NIFTY" {% if underlying=='NIFTY' %}selected{% endif %}>NIFTY</option>
+                <option value="HDFCBANK" {% if underlying=='HDFCBANK' %}selected{% endif %}>HDFC BANK</option>
+                <option value="BHARTIARTL" {% if underlying=='BHARTIARTL' %}selected{% endif %}>BHARTI AIRTEL</option>
+                <option value="ICICIBANK" {% if underlying=='ICICIBANK' %}selected{% endif %}>ICICI BANK</option>
+                <option value="SBIN" {% if underlying=='SBIN' %}selected{% endif %}>SBIN</option>
+                <option value="INFY" {% if underlying=='INFY' %}selected{% endif %}>INFY</option>
+                <option value="BANKNIFTY" {% if underlying=='BANKNIFTY' %}selected{% endif %}>BANKNIFTY</option>
+                <option value="SENSEX" {% if underlying=='SENSEX' %}selected{% endif %}>SENSEX</option>
+            </select>
+            <select id="expirySelect" class="select select-bordered">
+                {% if available_expiries %}
+                {% for exp in available_expiries %}
+                <option value="{{ exp }}" {% if exp==expiry %}selected{% endif %}>{{ exp }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+            <!-- Mode Selection Removed (Quote Only) -->
+            <button class="btn btn-primary" onclick="refreshOptionChain()">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                    </path>
+                </svg>
+                Refresh
+            </button>
+            <!-- ATM Mismatch Countdown Timer -->
+            <div id="atm-countdown" class="hidden items-center gap-2 ml-2 px-3 py-1.5 bg-warning/20 border border-warning/40 rounded-lg text-warning text-xs font-mono animate-pulse">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span>Regen in <strong id="atm-countdown-secs">60</strong>s</span>
+            </div>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error mb-6">
+        <svg class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    {% if chain_data %}
+    <!-- Market Info -->
+    <div class="stats shadow mb-6">
+        <div class="stat">
+            <div class="stat-title">{{ chain_data.underlying }} Spot</div>
+            <div id="spot-ltp" class="stat-value text-primary">{{ "%.2f"|format(chain_data.underlying_ltp) }}</div>
+            <div class="stat-desc">
+                Bid: {{ "%.2f"|format(chain_data.get('underlying_bid', 0)) }} |
+                Ask: {{ "%.2f"|format(chain_data.get('underlying_ask', 0)) }}
+            </div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">ATM Strike</div>
+            <div id="atm-strike" class="stat-value">{{ chain_data.atm_strike }}</div>
+            <div class="stat-desc">Expiry: {{ chain_data.expiry }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">PCR</div>
+            <div id="pcr-value"
+                class="stat-value {% if chain_data.market_metrics.pcr > 1 %}text-success{% else %}text-warning{% endif %}">
+                {{ "%.2f"|format(chain_data.market_metrics.pcr) }}
+            </div>
+            <div class="stat-desc">Put/Call Ratio</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Total Volume</div>
+            <div id="volume-stats" class="stat-value text-sm">
+                CE: <span id="total-ce-vol">{{ "{:,}".format(chain_data.market_metrics.total_ce_volume) }}</span>
+                <br>
+                PE: <span id="total-pe-vol">{{ "{:,}".format(chain_data.market_metrics.total_pe_volume) }}</span>
+            </div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Total OI</div>
+            <div id="oi-stats" class="stat-value text-sm">
+                CE: <span id="total-ce-oi">{{ "{:,}".format(chain_data.market_metrics.total_ce_oi) }}</span>
+                <br>
+                PE: <span id="total-pe-oi">{{ "{:,}".format(chain_data.market_metrics.total_pe_oi) }}</span>
+            </div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Spot Open</div>
+            <div id="spot-open" class="stat-value">{{ "%.2f"|format(chain_data.underlying_open) }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Spot High</div>
+            <div id="spot-high" class="stat-value">{{ "%.2f"|format(chain_data.underlying_high) }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Spot Low</div>
+            <div id="spot-low" class="stat-value">{{ "%.2f"|format(chain_data.underlying_low) }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Spot Close</div>
+            <div id="spot-close" class="stat-value">{{ "%.2f"|format(chain_data.underlying_close) }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-title">Spot Avg</div>
+            <div id="spot-avg" class="stat-value">{{ "%.2f"|format(chain_data.underlying_avg) }}</div>
+        </div>
+    </div>
+
+    <!-- Quant Decision Engine Dashboard -->
+    <div class="card bg-base-200 shadow-xl mb-6">
+        <div class="card-body p-4 relative">
+            <!-- Alert Banner -->
+            <div id="quant-warning" class="alert alert-warning shadow-lg mb-4 hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current flex-shrink-0 h-6 w-6" fill="none"
+                    viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span id="quant-warning-text" class="font-bold">Warning: ...</span>
+            </div>
+
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="card-title text-lg flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2v5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    Quant Decision Engine
+                    <span id="expiry-days-badge" class="badge badge-primary badge-sm text-[10px] ml-1">... DAYS TO
+                        EXPIRY</span>
+                    <span id="mode-badge" class="badge badge-sm badge-ghost text-[10px] ml-1">SNIPER MODE ACTIVE</span>
+
+                </h2>
+                <div class="flex items-center gap-2">
+                    <!-- Status Matrix -->
+                    <!-- Populated by JS -->
+                </div>
+                <!-- Live Opportunity Ticker (New v7) -->
+                <div id="opportunity-ticker"
+                    class="flex-1 bg-black/20 rounded px-3 py-1 mx-4 overflow-hidden mask-fade">
+                    <div
+                        class="ticker-content flex gap-6 text-[10px] font-mono whitespace-nowrap whitespace-nowrap animate-marquee">
+                        <span class="text-success">WAITING FOR OPPORTUNITIES...</span>
+                    </div>
+                </div>
+                <!-- Strategy Selector -->
+                <div class="join">
+                    <input class="join-item btn btn-xs btn-active" type="radio" name="strategy_options"
+                        aria-label="Sniper" onclick="setStrategyMode('SNIPER')" checked />
+                    <input class="join-item btn btn-xs" type="radio" name="strategy_options" aria-label="Scalper"
+                        onclick="setStrategyMode('SCALPER')" />
+                </div>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <!-- Trade Signal -->
+            <div class="stats bg-base-100 shadow col-span-1">
+                <div class="stat p-2">
+                    <div class="stat-title text-xs">Recommended Action</div>
+                    <div id="quant-action" class="stat-value text-lg text-secondary">WAITING...</div>
+                    <div id="quant-confidence" class="stat-desc font-bold mb-1">Confidence: -</div>
+                    <!-- Score Meter -->
+                    <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 relative overflow-hidden">
+                        <div id="quant-score-bar" class="bg-gray-400 h-2.5 rounded-full transition-all duration-500"
+                            style="width: 50%"></div>
+                        <!-- Center Marker -->
+                        <div class="absolute top-0 bottom-0 left-1/2 w-0.5 bg-black/20 transform -translate-x-1/2">
+                        </div>
+                    </div>
+                    <div class="flex justify-between text-[10px] px-1 mt-0.5 opacity-50">
+                        <span>Bear</span>
+                        <span>Bull</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trade Setup (New) -->
+            <div class="card bg-base-100 shadow col-span-1">
+
+                <div class="card-body p-2">
+                    <h3 class="card-title text-xs">Active Trade Setup</h3>
+                    <div id="setup-container" class="opacity-50">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="font-bold text-sm" id="setup-contract">NO SIGNAL</span>
+                            <span class="badge badge-outline text-xs" id="setup-rr">R:R -</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                            <div class="bg-base-200 p-1 rounded">
+                                <div class="text-xs opacity-70" id="setup-entry-label">Entry</div>
+
+                                <div class="font-bold" id="setup-entry">-</div>
+                            </div>
+                            <div class="bg-error/20 p-1 rounded text-error">
+                                <div class="text-xs opacity-70">SL</div>
+                                <div class="font-bold" id="setup-sl">-</div>
+                            </div>
+                            <div class="bg-success/20 p-1 rounded text-success">
+                                <div class="text-xs opacity-70">Target</div>
+                                <div class="font-bold" id="setup-target">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-base-100 p-2 rounded-box shadow text-xs overflow-y-auto h-24 col-span-1">
+                <div class="font-bold mb-1 flex justify-between">
+                    <span>Analysis:</span>
+                    <span id="quant-max-pain-micro" class="text-[10px] opacity-70">MP: 0</span>
+                </div>
+                <ul id="quant-reasons" class="list-disc list-inside opacity-70">
+                    <li>Collecting data...</li>
+                </ul>
+            </div>
+
+            <!-- Institutional Flow & Momentum -->
+            <div
+                class="bg-base-100 p-2 rounded-box shadow text-xs border border-accent/20 h-24 col-span-1 flex flex-col">
+                <div class="flex justify-between items-center mb-1">
+                    <div class="font-bold flex items-center gap-1 text-accent">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-none"
+                            style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Flow & Momentum:
+                    </div>
+                    <!-- PCR Momentum Badge -->
+                    <div class="tooltip tooltip-left" data-tip="PCR Rate of Change">
+                        <span id="pcr-momentum-badge"
+                            class="badge badge-ghost badge-xs font-mono text-[10px] cursor-help">PCR: WAIT</span>
+                    </div>
+                </div>
+
+                <div id="flow-alerts-container" class="flex flex-wrap gap-1 overflow-y-auto content-start">
+                    <span class="opacity-50 text-[10px]">No active flow...</span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Option Chain Table -->
+<div class="overflow-x-auto shadow-xl rounded-lg">
+    <table class="table table-compact w-full">
+        <thead>
+            <tr class="bg-base-200">
+                <!-- CE Side -->
+                <th class="text-center w-12 bg-primary/5">Findings</th>
+                <th class="text-right">GEX</th>
+                <th class="text-right">Vega</th>
+                <th class="text-right">Theta</th>
+                <th class="text-right">Gamma</th>
+                <th class="text-right">Delta</th>
+                <th class="text-right">IV</th>
+
+                <th class="text-right">OI / ΔOI</th>
+                <th class="text-right">Volume</th>
+                <th class="text-right font-bold">LTP</th>
+                <th class="text-right">Open</th>
+                <th class="text-right">High</th>
+                <th class="text-right">Low</th>
+                <th class="text-right">Close</th>
+                <th class="text-right">Avg Price</th>
+                <th class="text-right">Spread</th>
+                <th class="text-center bg-base-300">CE Tag</th>
+                <!-- Strike Info -->
+                <th class="text-center bg-base-300 font-bold">Strike</th>
+                <!-- PE Tag -->
+                <th class="text-center bg-base-300">PE Tag</th>
+                <!-- PE Side -->
+                <th class="text-left">GEX</th>
+                <th class="text-left">Spread</th>
+
+                <th class="text-left font-bold">LTP</th>
+                <th class="text-left">Open</th>
+                <th class="text-left">High</th>
+                <th class="text-left">Low</th>
+                <th class="text-left">Close</th>
+                <th class="text-left">Avg</th>
+                <th class="text-left">Volume</th>
+                <th class="text-left">OI / ΔOI</th>
+                <th class="text-left">IV</th>
+                <th class="text-left">Delta</th>
+                <th class="text-left">Gamma</th>
+                <th class="text-left">Theta</th>
+                <th class="text-left">Vega</th>
+            </tr>
+        </thead>
+        <tbody id="optionChainData">
+            {% for option in chain_data.options %}
+            <tr class="hover {% if option.tag == 'ATM' %}bg-primary/10 font-bold{% elif 'ITM' in option.tag %}bg-success/5{% else %}bg-warning/5{% endif %}"
+                data-strike="{{ option.strike }}" data-tag="{{ option.tag }}">
+                <!-- CE Data -->
+                <td class="px-1 text-center bg-primary/5">
+                    <div class="flex items-center justify-center gap-1 h-full min-h-[32px] findings-cell"
+                        data-strike="{{ option.strike }}">
+                        <!-- Icons populated by JS: 🚀 (momentum), 🧱 (gamma wall), 🐋 (institutional) -->
+                    </div>
+                </td>
+                <td
+                    class="text-right font-mono text-[10px] ce-gex {% if option.ce_data.gex > 0 %}text-success{% else %}text-error{% endif %}">
+                    {{ "%.0f"|format(option.ce_data.gex / 1000) }}k
+                </td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.vega) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.theta) }}</td>
+                <td class="text-right">{{ "%.4f"|format(option.ce_data.gamma) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.delta) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.iv) }}</td>
+
+                <td class="text-right ce-oi" data-intensity="{{ option.ce_data.oi_intensity }}"
+                    data-sentiment="{{ option.ce_data.oi_sentiment }}">
+                    {{ "{:,}".format(option.ce_data.oi) }}
+                    <br><span class="text-xs opacity-50">+0</span>
+                </td>
+                <td class="text-right">{{ "{:,}".format(option.ce_data.volume) }}</td>
+                <td class="text-right font-bold ce-ltp">{{ "%.2f"|format(option.ce_data.ltp) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.open) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.high) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.low) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.close) }}</td>
+                <td class="text-right">{{ "%.2f"|format(option.ce_data.avg_price) }}</td>
+                <td class="text-right {% if option.ce_data.spread > 1 %}text-warning{% else %}text-success{% endif %}">
+                    {{ "%.2f"|format(option.ce_data.spread) }}
+                </td>
+                <!-- CE Tag -->
+                <td class="text-center bg-base-300">
+                    <span
+                        class="badge badge-sm {% if option.tag == 'ATM' %}badge-primary{% elif 'ITM' in option.tag %}badge-success{% else %}badge-warning{% endif %}">
+                        {{ option.tag }}
+                    </span>
+                </td>
+                <!-- Strike -->
+                <td class="text-center bg-base-300 font-bold relative">
+                    {{ option.strike }}
+                    {% if option.is_gamma_wall %}
+                    <div class="absolute -top-1 -right-1">
+                        <span class="badge badge-error badge-xs p-0 w-3 h-3 border-none animate-pulse"
+                            title="GAMMA WALL"></span>
+                    </div>
+                    {% endif %}
+                </td>
+
+                <!-- PE Tag (ITM/OTM reversed for PE) -->
+                <td class="text-center bg-base-300">
+                    <span
+                        class="badge badge-sm {% if option.tag == 'ATM' %}badge-primary{% elif 'OTM' in option.tag %}badge-success{% else %}badge-warning{% endif %}">
+                        {% if option.tag == 'ATM' %}ATM{% elif 'ITM' in option.tag %}OTM{{ option.tag[3:] }}{% else
+                        %}ITM{{ option.tag[3:] }}{% endif %}
+                    </span>
+                </td>
+                <!-- PE Data -->
+                <td
+                    class="text-left font-mono text-[10px] {% if option.pe_data.gex > 0 %}text-error{% else %}text-success{% endif %}">
+                    {{ "%.0f"|format(option.pe_data.gex / 1000) }}k
+                </td>
+                <td class="text-left {% if option.pe_data.spread > 1 %}text-warning{% else %}text-success{% endif %}">
+                    {{ "%.2f"|format(option.pe_data.spread) }}
+                </td>
+
+                <td class="text-left font-bold pe-ltp">{{ "%.2f"|format(option.pe_data.ltp) }}</td>
+                <td class="text-left">{{ option.pe_data.open }}</td>
+                <td class="text-left font-bold pe-ltp">{{ "%.2f"|format(option.pe_data.high) }}</td>
+                <td class="text-left font-bold pe-ltp">{{ "%.2f"|format(option.pe_data.low) }}</td>
+                <td class="text-left font-bold pe-ltp">{{ "%.2f"|format(option.pe_data.close) }}</td>
+                <td class="text-left font-bold pe-ltp">{{ "%.2f"|format(option.pe_data.avg_price) }}</td>
+                <td class="text-left">{{ "{:,}".format(option.pe_data.volume) }}</td>
+                <td class="text-left pe-oi" data-intensity="{{ option.pe_data.oi_intensity }}"
+                    data-sentiment="{{ option.pe_data.oi_sentiment }}">
+                    {{ "{:,}".format(option.pe_data.oi) }}
+                    <br><span class="text-xs opacity-50">+0</span>
+                </td>
+                <td
+                    class="text-left pe-iv {% if option.pe_data.iv_status == 'cheap' %}bg-success/20{% elif option.pe_data.iv_status == 'expensive' %}bg-error/20{% endif %}">
+                    {{ "%.2f"|format(option.pe_data.iv) }}
+                </td>
+                <td class="text-left">{{ "%.2f"|format(option.pe_data.delta) }}</td>
+                <td class="text-left">{{ "%.4f"|format(option.pe_data.gamma) }}</td>
+                <td class="text-left">{{ "%.2f"|format(option.pe_data.theta) }}</td>
+                <td class="text-left">{{ "%.2f"|format(option.pe_data.vega) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- WebSocket Status -->
+<div class="mt-6 flex justify-between items-center">
+    <div class="flex items-center gap-2">
+        <span class="text-sm text-base-content/60">Connection Status:</span>
+        <span id="wsStatus" class="badge badge-success">Disconnected</span>
+    </div>
+    <div class="text-sm text-base-content/60">
+        Last Update: <span id="lastUpdate">-</span>
+    </div>
+</div>
+</div>
+
+<style>
+    /* Custom styles for option chain */
+    .table-compact th,
+    .table-compact td {
+        padding: 0.5rem 0.75rem;
+    }
+
+    /* Highlight spreads */
+    .spread-tight {
+        background-color: rgba(74, 222, 128, 0.1);
+    }
+
+    .spread-normal {
+        background-color: rgba(251, 191, 36, 0.1);
+    }
+
+    .spread-wide {
+        background-color: rgba(248, 113, 113, 0.1);
+    }
+
+    /* Animation for price changes */
+    .price-up {
+        animation: flash-green 1s;
+    }
+
+    .price-down {
+        animation: flash-red 1s;
+    }
+
+    @keyframes flash-green {
+        0% {
+            background-color: rgba(74, 222, 128, 0.3);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+    }
+
+    @keyframes flash-red {
+        0% {
+            background-color: rgba(248, 113, 113, 0.3);
+        }
+
+        100% {
+            background-color: transparent;
+        }
+    }
+
+    /* v7 Marquee Animation */
+    @keyframes marquee {
+        0% {
+            transform: translateX(100%);
+        }
+
+        100% {
+            transform: translateX(-100%);
+        }
+    }
+
+    .animate-marquee {
+        display: inline-block;
+        animation: marquee 30s linear infinite;
+        min-width: 100%;
+    }
+
+    .mask-fade {
+        mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+    }
+</style>
+
+<script>
+    let eventSource = null;
+    let previousData = {};
+    let expiryCache = {}; // Cache for all expiry dates
+
+    // NEW: Session management for on-demand WebSocket subscriptions
+    let optionChainSessionId = null;
+    let heartbeatInterval = null;
+
+    // ATM mismatch countdown
+    let atmCountdownInterval = null;
+
+    function updateAtmCountdown(data) {
+        const el = document.getElementById('atm-countdown');
+        const secsEl = document.getElementById('atm-countdown-secs');
+        if (!el || !secsEl) return;
+
+        // If no mismatch (mismatch_since is 0 or chain_atm matches atm_strike)
+        if (!data.atm_mismatch_since || data.chain_atm === data.atm_strike) {
+            el.classList.add('hidden');
+            el.classList.remove('flex');
+            if (atmCountdownInterval) { clearInterval(atmCountdownInterval); atmCountdownInterval = null; }
+            return;
+        }
+
+        // Calculate remaining seconds
+        const elapsed = (Date.now() / 1000) - data.atm_mismatch_since;
+        const remaining = Math.max(0, Math.ceil(60 - elapsed));
+
+        if (remaining <= 0) {
+            // About to regenerate, hide timer
+            el.classList.add('hidden');
+            el.classList.remove('flex');
+            return;
+        }
+
+        secsEl.textContent = remaining;
+        el.classList.remove('hidden');
+        el.classList.add('flex');
+
+        // Start a local 1s interval to tick down smoothly between SSE updates
+        if (atmCountdownInterval) clearInterval(atmCountdownInterval);
+        let localRemaining = remaining;
+        atmCountdownInterval = setInterval(() => {
+            localRemaining--;
+            if (localRemaining <= 0) {
+                clearInterval(atmCountdownInterval);
+                atmCountdownInterval = null;
+                el.classList.add('hidden');
+                el.classList.remove('flex');
+            } else {
+                secsEl.textContent = localRemaining;
+            }
+        }, 1000);
+    }
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function () {
+        // Preload expiry dates for all underlyings
+        preloadAllExpiries();
+
+        // Handle underlying change
+        document.getElementById('underlyingSelect').addEventListener('change', function () {
+            const underlying = this.value;
+            console.log('[UNDERLYING CHANGE] Switching to:', underlying);
+
+            // Update expiry dropdown from cache
+            updateExpiryDropdown(underlying);
+
+            // Destroy old session (will create new one after page refresh)
+            destroyOptionChainSession();
+
+            // Refresh option chain
+            refreshOptionChain();
+            // startRealTimeUpdates(); // refreshOptionChain reloads page, so this is redundant and causes race conditions
+        });
+
+        // Handle expiry change
+        document.getElementById('expirySelect').addEventListener('change', function () {
+            const expiry = this.value;
+            console.log('[EXPIRY CHANGE] Changed to:', expiry);
+
+            // Refresh page to ensure clean session state
+            refreshOptionChain();
+        });
+
+
+
+        // NEW: Create session on initial page load
+        // NOTE: startRealTimeUpdates() is already called inside preloadAllExpiries()
+        // so we only create the session here, NOT start a duplicate SSE stream
+        setTimeout(() => {
+            createOptionChainSession();
+        }, 2000);  // Wait 2 seconds for expiries to load
+    });
+
+    // Preload expiry dates for all underlyings
+    async function preloadAllExpiries() {
+        const underlyings = ['RELIANCE', 'NIFTY', 'BANKNIFTY', 'SENSEX', 'HDFCBANK', 'ICICIBANK', 'AXISBANK', 'INFY', 'TCS', 'WIPRO', 'BHARTIARTL'];
+        console.log('[EXPIRY PRELOAD] Loading expiry dates for all underlyings...');
+
+        // Get currently selected values from server-rendered dropdown (before we replace it)
+        const currentUnderlying = document.getElementById('underlyingSelect').value;
+        const currentExpiry = document.getElementById('expirySelect').value;
+        console.log('[EXPIRY PRELOAD] Preserving current selection:', currentUnderlying, currentExpiry);
+
+        try {
+            // Fetch all expiries in parallel
+            const promises = underlyings.map(underlying =>
+                fetch(`/trading/api/option-chain/expiry/${underlying}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success' && data.data) {
+                            expiryCache[underlying] = data.data;
+                            console.log(`[EXPIRY PRELOAD] Loaded ${data.data.length} expiries for ${underlying}`);
+                        } else {
+                            expiryCache[underlying] = [];
+                            console.error(`[EXPIRY PRELOAD] Failed to load expiries for ${underlying}:`, data);
+                        }
+                    })
+                    .catch(error => {
+                        expiryCache[underlying] = [];
+                        console.error(`[EXPIRY PRELOAD] Error loading expiries for ${underlying}:`, error);
+                    })
+            );
+
+            await Promise.all(promises);
+            console.log('[EXPIRY PRELOAD] All expiries loaded:', expiryCache);
+
+            // Update expiry dropdown, preserving the server-rendered selection
+            updateExpiryDropdown(currentUnderlying, currentExpiry);
+
+            // Start real-time updates
+            startRealTimeUpdates();
+
+        } catch (error) {
+            console.error('[EXPIRY PRELOAD] Error preloading expiries:', error);
+        }
+    }
+
+    // Update expiry dropdown from cache
+    function updateExpiryDropdown(underlying, preserveExpiry = null) {
+        const expirySelect = document.getElementById('expirySelect');
+        const expiries = expiryCache[underlying] || [];
+
+        // Use preserved expiry if provided, otherwise try to get current value
+        const targetExpiry = preserveExpiry || expirySelect.value;
+
+        console.log(`[EXPIRY UPDATE] Updating dropdown for ${underlying} with ${expiries.length} expiries, target expiry:`, targetExpiry);
+
+        if (expiries.length > 0) {
+            // Clear and populate
+            expirySelect.innerHTML = '';
+
+            let expiryFound = false;
+
+            expiries.forEach((expiry, index) => {
+                const option = document.createElement('option');
+                option.value = expiry;
+                option.textContent = expiry;
+
+                // Select the target expiry if it matches, otherwise select first
+                if (expiry === targetExpiry) {
+                    option.selected = true;
+                    expiryFound = true;
+                    console.log('[EXPIRY UPDATE] Selected expiry:', expiry);
+                } else if (index === 0 && !targetExpiry) {
+                    option.selected = true;
+                    console.log('[EXPIRY UPDATE] Selected first expiry (no target):', expiry);
+                }
+
+                expirySelect.appendChild(option);
+            });
+
+            // If target expiry wasn't found, select the first one
+            if (!expiryFound && targetExpiry && expiries.length > 0) {
+                console.log('[EXPIRY UPDATE] Target expiry not found, selecting first:', expiries[0]);
+                expirySelect.value = expiries[0];
+            }
+
+            expirySelect.disabled = false;
+        } else {
+            expirySelect.innerHTML = '<option>No expiry dates available</option>';
+            expirySelect.disabled = true;
+        }
+    }
+
+    function startRealTimeUpdates() {
+        // Close existing connection if any
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        const underlying = document.getElementById('underlyingSelect').value;
+        const expiry = document.getElementById('expirySelect').value;
+        if (!expiry || expiry.includes('No expiry')) {
+            console.warn('Invalid expiry selected, skipping stream start.');
+            updateStatus('Waiting for Data...', 'badge-ghost');
+            return;
+        }
+
+        console.log('[SSE START] Underlying:', underlying, 'Expiry:', expiry);
+
+        // Update status to connecting
+        updateStatus('Connecting...', 'badge-warning');
+
+        // Create SSE connection - using the /stream-v7/<underlying> endpoint (v7 Quote Mode)
+        // Include expiry as query parameter if available
+        const sseUrl = expiry ?
+            `/trading/api/option-chain/stream-v10/${underlying}?expiry=${encodeURIComponent(expiry)}` :
+            `/trading/api/option-chain/stream-v10/${underlying}`;
+
+        console.log('[SSE START] Connecting to:', sseUrl);
+
+        eventSource = new EventSource(sseUrl, {
+            withCredentials: true
+        });
+
+        eventSource.onopen = function () {
+            console.log('SSE Connection opened');
+            updateStatus('Connected', 'badge-success');
+        };
+
+        // RAF throttling to prevent render queue backup
+        let rafPending = false;
+        let pendingData = null;
+        let rafWatchdog = null;  // Watchdog timer to reset stuck RAF flag
+        let reconnectTimer = null;  // Track reconnect timeout to prevent duplicates
+
+        eventSource.onmessage = function (event) {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.status === 'inactive') {
+                    console.log('[SSE] Option chain inactive:', data.message);
+                    updateStatus('Inactive', 'badge-warning');
+                    return;
+                }
+
+                if (data.status === 'error' || data.error) {
+                    console.error('[SSE] Error:', data.message || data.error);
+                    updateStatus('Error', 'badge-error');
+                    return;
+                }
+
+                // ATM mismatch countdown timer
+                updateAtmCountdown(data);
+
+                // Check if backend signals chain regeneration needed (ATM mismatch for 60s)
+                if (data.regeneration_needed) {
+                    console.log('[SSE] Regeneration needed - ATM mismatch persisted. Refreshing...');
+                    refreshOptionChain();
+                    return;
+                }
+
+                // Store latest data and schedule RAF update
+                pendingData = data;
+
+                if (!rafPending) {
+                    rafPending = true;
+
+                    // Watchdog: if RAF doesn't fire within 3s (tab hidden/GPU stall),
+                    // reset flag so we don't permanently drop updates
+                    if (rafWatchdog) clearTimeout(rafWatchdog);
+                    rafWatchdog = setTimeout(() => {
+                        if (rafPending) {
+                            console.warn('[UI] RAF watchdog triggered - resetting stale flag');
+                            rafPending = false;
+                        }
+                    }, 3000);
+
+                    requestAnimationFrame(() => {
+                        if (rafWatchdog) { clearTimeout(rafWatchdog); rafWatchdog = null; }
+                        try {
+                            if (pendingData) {
+                                updateOptionChain(pendingData);
+                                updateStatus('Connected', 'badge-success');
+                                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                                pendingData = null;
+                            }
+                        } catch (err) {
+                            console.error('[UI UPDATE] Error in update cycle:', err);
+                        } finally {
+                            rafPending = false;
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('[SSE] Parse error:', e);
+            }
+        };
+
+        eventSource.onerror = function (error) {
+            console.error('SSE Connection error:', error);
+            updateStatus('Disconnected', 'badge-error');
+
+            // Cancel any pending reconnect to prevent duplicate connections
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
+            reconnectTimer = setTimeout(function () {
+                reconnectTimer = null;
+                if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+                    console.log('Attempting to reconnect...');
+                    startRealTimeUpdates();
+                }
+            }, 5000);
+        };
+    }
+
+    function updateStatus(status, badgeClass) {
+        const statusElement = document.querySelector('#wsStatus');
+        if (statusElement) {
+            statusElement.textContent = status;
+            statusElement.className = `badge ${badgeClass}`;
+        }
+    }
+
+    function updateOptionChain(data) {
+        try {
+            // Update market info
+            updateMarketInfo(data);
+
+            // Update option chain table
+            if (data.options) {
+                // Check if strikes changed (chain regenerated) - compare strike sets
+                const existingRows = document.querySelectorAll('#optionChainData tr[data-strike]');
+                const existingStrikes = new Set(Array.from(existingRows).map(r => r.getAttribute('data-strike')));
+                const newStrikes = new Set(data.options.map(o => String(o.strike)));
+
+                // If strikes changed, rebuild entire table
+                const strikesMatch = existingStrikes.size === newStrikes.size &&
+                    [...existingStrikes].every(s => newStrikes.has(s));
+
+                if (!strikesMatch && data.options.length > 0) {
+                    console.log('[UI] Strikes changed - rebuilding option chain table');
+                    rebuildOptionChainTable(data);
+                } else {
+                    data.options.forEach((option, index) => {
+                        updateOptionRow(option);
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('[UI] Error updating tree/rows:', error);
+        }
+    }
+
+    function rebuildOptionChainTable(data) {
+        const tbody = document.getElementById('optionChainData');
+        if (!tbody) return;
+
+        // Clear existing rows
+        tbody.innerHTML = '';
+
+        // Build new rows from SSE data
+        data.options.forEach(option => {
+            const tag = option.tag || '';
+            const isATM = tag === 'ATM';
+            const isITM = tag.includes('ITM');
+
+            // Determine PE tag (reversed)
+            let peTag = tag;
+            if (tag === 'ATM') peTag = 'ATM';
+            else if (tag.includes('ITM')) peTag = 'OTM' + tag.slice(3);
+            else if (tag.includes('OTM')) peTag = 'ITM' + tag.slice(3);
+
+            const rowClass = isATM ? 'bg-primary/10 font-bold' : isITM ? 'bg-success/5' : 'bg-warning/5';
+            const ceTagClass = isATM ? 'badge-primary' : isITM ? 'badge-success' : 'badge-warning';
+            const peTagClass = isATM ? 'badge-primary' : tag.includes('OTM') ? 'badge-success' : 'badge-warning';
+
+            const formatNum = (v, d=2) => v ? Number(v).toFixed(d) : '0.' + '0'.repeat(d);
+            const formatInt = v => v ? Number(v).toLocaleString() : '0';
+            const formatGex = v => {
+                const abs = Math.abs(v || 0);
+                if (abs >= 1000000) return (v/1000000).toFixed(1) + 'M';
+                if (abs >= 1000) return (v/1000).toFixed(0) + 'k';
+                return (v || 0).toFixed(0);
+            };
+
+            const ce = option.ce_data || {};
+            const pe = option.pe_data || {};
+
+            const tr = document.createElement('tr');
+            tr.className = `hover ${rowClass}`;
+            tr.setAttribute('data-strike', option.strike);
+            tr.setAttribute('data-tag', tag);
+
+            tr.innerHTML = `
+                <td class="px-1 text-center bg-primary/5"><div class="flex items-center justify-center gap-1 h-full min-h-[32px] findings-cell" data-strike="${option.strike}"><span class="opacity-30">-</span></div></td>
+                <td class="text-right font-mono text-[10px]">${formatGex(ce.gex)}</td>
+                <td class="text-right">${formatNum(ce.vega)}</td>
+                <td class="text-right">${formatNum(ce.theta)}</td>
+                <td class="text-right">${formatNum(ce.gamma,4)}</td>
+                <td class="text-right">${formatNum(ce.delta)}</td>
+                <td class="text-right">${formatNum(ce.iv)}</td>
+                <td class="text-right">${formatInt(ce.oi)}<br><span class="text-xs opacity-50">+0</span></td>
+                <td class="text-right">${formatInt(ce.volume)}</td>
+                <td class="text-right font-bold ce-ltp">${formatNum(ce.ltp)}</td>
+                <td class="text-right">${formatNum(ce.open)}</td>
+                <td class="text-right">${formatNum(ce.high)}</td>
+                <td class="text-right">${formatNum(ce.low)}</td>
+                <td class="text-right">${formatNum(ce.close)}</td>
+                <td class="text-right">${formatNum(ce.avg_price)}</td>
+                <td class="text-right">${formatNum(ce.spread)}</td>
+                <td class="text-center bg-base-300"><span class="badge badge-sm ${ceTagClass}">${tag}</span></td>
+                <td class="text-center bg-base-300 font-bold relative">${option.strike}</td>
+                <td class="text-center bg-base-300"><span class="badge badge-sm ${peTagClass}">${peTag}</span></td>
+                <td class="text-left font-mono text-[10px]">${formatGex(pe.gex)}</td>
+                <td class="text-left">${formatNum(pe.spread)}</td>
+                <td class="text-left font-bold pe-ltp">${formatNum(pe.ltp)}</td>
+                <td class="text-left">${formatNum(pe.open)}</td>
+                <td class="text-left">${formatNum(pe.high)}</td>
+                <td class="text-left">${formatNum(pe.low)}</td>
+                <td class="text-left">${formatNum(pe.close)}</td>
+                <td class="text-left">${formatNum(pe.avg_price)}</td>
+                <td class="text-left">${formatInt(pe.volume)}</td>
+                <td class="text-left">${formatInt(pe.oi)}<br><span class="text-xs opacity-50">+0</span></td>
+                <td class="text-left">${formatNum(pe.iv)}</td>
+                <td class="text-left">${formatNum(pe.delta)}</td>
+                <td class="text-left">${formatNum(pe.gamma,4)}</td>
+                <td class="text-left">${formatNum(pe.theta)}</td>
+                <td class="text-left">${formatNum(pe.vega)}</td>
+            `;
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    function updateMarketInfo(data) {
+        // Update spot price
+        const spotElement = document.getElementById('spot-ltp');
+        if (spotElement && data.underlying_ltp) {
+            const oldValue = parseFloat(spotElement.textContent) || 0;
+            const newValue = data.underlying_ltp;
+            spotElement.textContent = newValue.toFixed(2);
+
+            // Add animation for spot price changes
+            if (oldValue !== newValue) {
+                spotElement.classList.add(newValue > oldValue ? 'text-success' : 'text-error');
+                setTimeout(() => {
+                    spotElement.classList.remove('text-success', 'text-error');
+                    spotElement.classList.add('text-primary');
+                }, 1000);
+            }
+        }
+
+        // Update ATM strike
+        const atmElement = document.getElementById('atm-strike');
+        if (atmElement && data.atm_strike) {
+            atmElement.textContent = data.atm_strike;
+        }
+
+        // Update PCR
+        const pcrElement = document.getElementById('pcr-value');
+        if (pcrElement && data.market_metrics && data.market_metrics.pcr !== undefined) {
+            pcrElement.textContent = data.market_metrics.pcr.toFixed(8);
+
+            // Update PCR color based on value
+            pcrElement.classList.remove('text-success', 'text-warning');
+            if (data.market_metrics.pcr > 1) {
+                pcrElement.classList.add('text-success');
+            } else {
+                pcrElement.classList.add('text-warning');
+            }
+        }
+
+        // Update Total Volume
+        const ceVolElement = document.getElementById('total-ce-vol');
+        const peVolElement = document.getElementById('total-pe-vol');
+        if (ceVolElement && peVolElement && data.market_metrics) {
+            ceVolElement.textContent = (data.market_metrics.total_ce_volume || 0).toLocaleString();
+            peVolElement.textContent = (data.market_metrics.total_pe_volume || 0).toLocaleString();
+        }
+
+        // Update Total OI
+        const ceOiElement = document.getElementById('total-ce-oi');
+        const peOiElement = document.getElementById('total-pe-oi');
+        if (ceOiElement && peOiElement && data.market_metrics) {
+            ceOiElement.textContent = (data.market_metrics.total_ce_oi || 0).toLocaleString();
+            peOiElement.textContent = (data.market_metrics.total_pe_oi || 0).toLocaleString();
+        }
+
+        // Update Spot OHLC + Avg
+        const openElement = document.getElementById('spot-open');
+        if (openElement && data.underlying_open) openElement.textContent = data.underlying_open.toFixed(2);
+
+        const highElement = document.getElementById('spot-high');
+        if (highElement && data.underlying_high) highElement.textContent = data.underlying_high.toFixed(2);
+
+        const lowElement = document.getElementById('spot-low');
+        if (lowElement && data.underlying_low) lowElement.textContent = data.underlying_low.toFixed(2);
+
+        const closeElement = document.getElementById('spot-close');
+        if (closeElement && data.underlying_close) closeElement.textContent = data.underlying_close.toFixed(2);
+
+        const avgElement = document.getElementById('spot-avg');
+        if (avgElement && data.underlying_avg) avgElement.textContent = data.underlying_avg.toFixed(2);
+
+        // Update Quant Decision Engine
+        if (data.market_metrics && data.market_metrics.quant_signal) {
+            const signal = data.market_metrics.quant_signal;
+            const actionEl = document.getElementById('quant-action');
+            const confEl = document.getElementById('quant-confidence');
+            const mpEl = document.getElementById('quant-max-pain');
+            const sentEl = document.getElementById('quant-sentiment');
+            const reasonsEl = document.getElementById('quant-reasons');
+
+            if (actionEl) {
+                actionEl.textContent = signal.action;
+                actionEl.className = 'stat-value text-lg ' +
+                    (signal.action.includes('BUY CALL') ? 'text-success' :
+                        signal.action.includes('BUY PUT') ? 'text-error' :
+                            signal.action.includes('SELL') ? 'text-info' : 'text-warning'); // Added SELL color
+            }
+            // Update Score Meter
+            const barEl = document.getElementById('quant-score-bar');
+            if (barEl && signal.score !== undefined) {
+                // Map -100..100 to 0..100%
+                const pct = (signal.score + 100) / 2;
+                barEl.style.width = `${pct}%`;
+
+                // Color logic
+                if (signal.score > 20) {
+                    barEl.className = 'bg-success h-2.5 rounded-full transition-all duration-500';
+                } else if (signal.score < -20) {
+                    barEl.className = 'bg-error h-2.5 rounded-full transition-all duration-500';
+                } else {
+                    barEl.className = 'bg-warning h-2.5 rounded-full transition-all duration-500';
+                }
+            }
+
+            if (confEl) confEl.textContent = 'Confidence: ' + signal.confidence;
+
+            // Update Days to Expiry
+            const expiryBadge = document.getElementById('expiry-days-badge');
+            if (expiryBadge && data.market_metrics.days_to_expiry !== undefined) {
+                expiryBadge.textContent = data.market_metrics.days_to_expiry + ' DAYS TO EXPIRY';
+            }
+
+            // max pain micro
+            const mpMicro = document.getElementById('quant-max-pain-micro');
+            if (mpMicro) mpMicro.textContent = 'MP: ' + data.market_metrics.max_pain;
+
+            // Update Alert
+            const alertBox = document.getElementById('quant-warning');
+            const alertText = document.getElementById('quant-warning-text');
+            // Update Alerts
+            const flowContainer = document.getElementById('flow-alerts-container');
+            if (flowContainer) {
+                if (data.market_metrics.flow_alerts && data.market_metrics.flow_alerts.length > 0) {
+                    flowContainer.innerHTML = '';
+                    data.market_metrics.flow_alerts.forEach(alert => {
+                        const span = document.createElement('span');
+                        span.className = 'badge badge-accent badge-sm text-[10px] animate-pulse';
+                        span.textContent = alert;
+                        flowContainer.appendChild(span);
+                    });
+                } else {
+                    flowContainer.innerHTML = '<span class="opacity-50 text-[10px]">No active flow...</span>';
+                }
+            }
+
+            // Update Mode Badge
+            if (signal.mode) {
+                const modeBadge = document.getElementById('mode-badge');
+                if (modeBadge) modeBadge.textContent = signal.mode + ' MODE ACTIVE';
+            }
+
+            // Update Opportunity Ticker
+            const ticker = document.querySelector('#opportunity-ticker .ticker-content');
+            if (ticker && signal.reasons) {
+                ticker.innerHTML = '';
+                signal.reasons.forEach(reason => {
+                    const wrap = document.createElement('span');
+                    // Color code ticker items
+                    if (reason.includes('OPPORTUNITY') || reason.includes('TRAP')) {
+                        wrap.className = 'text-accent font-bold';
+                    } else if (reason.includes('Bullish')) {
+                        wrap.className = 'text-success';
+                    } else if (reason.includes('Bearish')) {
+                        wrap.className = 'text-error';
+                    }
+                    wrap.textContent = reason.toUpperCase();
+                    ticker.appendChild(wrap);
+                });
+            }
+
+            // Add Momentum Icon to ATM Strike Findings
+            if (signal.reasons) {
+                const momentumReason = signal.reasons.find(r => r.includes('MOMENTUM BURST') || r.includes('MOMENTUM CRASH'));
+                if (momentumReason && data.atm_strike) {
+                    const atmRow = document.querySelector(`tr[data-strike="${data.atm_strike}"]`);
+                    if (atmRow) {
+                        const findingsCell = atmRow.querySelector('.findings-cell');
+                        if (findingsCell) {
+                            const icon = momentumReason.includes('BURST') ? '🚀' : '🔻';
+                            const title = momentumReason.includes('BURST') ? 'Momentum Burst' : 'Momentum Crash';
+                            if (!findingsCell.innerHTML.includes(icon)) {
+                                findingsCell.innerHTML = `<span title="${title}">${icon}</span> ` + findingsCell.innerHTML;
+                            }
+                        }
+                    }
+                }
+            }
+            const badge = document.getElementById('mode-badge');
+            if (badge) {
+                badge.textContent = signal.mode + ' MODE ACTIVE';
+            }
+            // Sync Radio Buttons and Matrix
+            const radios = document.getElementsByName('strategy_options');
+            for (const radio of radios) {
+                const label = radio.getAttribute('aria-label').toUpperCase();
+                if (label === signal.mode) {
+                    radio.checked = true;
+                    radio.classList.add('btn-active');
+                } else {
+                    radio.classList.remove('btn-active');
+                }
+            }
+
+
+
+            // --- Update Strategy Matrix ---
+            if (signal.strategy_matrix) {
+                const container = document.getElementById('matrix-container');
+                container.innerHTML = '';
+
+                Object.entries(signal.strategy_matrix).forEach(([strat, data]) => {
+                    // strat: SNIPER, SCALPER
+                    // data: {action: 'WAIT', bias: '...'}
+                    const badge = document.createElement('div');
+                    // Styling
+                    let colorClass = 'badge-neutral';
+                    let icon = '⏸️';
+                    if (data.action.includes('BUY')) {
+                        colorClass = 'badge-success text-white blink';
+                        icon = '🟢';
+                    } else if (data.action.includes('SELL')) {
+                        colorClass = 'badge-info text-white blink'; // Changed to info for SELL
+                        icon = '🔵'; // Changed icon for SELL
+                    }
+
+                    // Highlight selected strategy
+                    const isSelected = (signal.mode === strat);
+                    const borderClass = isSelected ? 'border-2 border-primary' : '';
+
+                    badge.className = `badge ${colorClass} badge-sm text-[10px] gap-1 cursor-pointer ${borderClass}`;
+                    badge.innerHTML = `${icon} ${strat}: ${data.action.split(' ')[0]}`; // Shorten action
+
+                    // Click to Switch
+                    badge.onclick = () => setStrategyMode(strat);
+
+                    container.appendChild(badge);
+                });
+            }
+
+
+            // Update Trade Setup
+            const setupContainer = document.getElementById('setup-container');
+            if (setupContainer) {
+                if (signal.trade_setup && Object.keys(signal.trade_setup).length > 0) {
+                    setupContainer.classList.remove('opacity-50');
+                    let contractName = signal.trade_setup.contract;
+                    if (signal.trade_setup.legs && signal.trade_setup.legs.length > 0) {
+                        contractName = signal.trade_setup.legs.map(l => l.name).join(' + ');
+                    }
+                    document.getElementById('setup-contract').textContent = contractName;
+
+
+                    // Status Badge
+                    const rrBadge = document.getElementById('setup-rr');
+                    const status = signal.trade_setup.status || 'ENTRY';
+                    if (rrBadge) rrBadge.textContent = status;
+
+                    if (status === 'RIDING TREND') {
+                        if (rrBadge) {
+                            rrBadge.classList.add('badge-accent');
+                            rrBadge.classList.remove('badge-outline');
+                        }
+                        // Highlight SL as it is trailing
+                        const slEl = document.getElementById('setup-sl');
+                        if (slEl && slEl.parentElement) {
+                            slEl.parentElement.classList.add('ring', 'ring-warning', 'ring-offset-2');
+                        }
+                    } else {
+                        if (rrBadge) {
+                            rrBadge.classList.remove('badge-accent');
+                            rrBadge.classList.add('badge-outline');
+                        }
+                        const slEl = document.getElementById('setup-sl');
+                        if (slEl && slEl.parentElement) {
+                            slEl.parentElement.classList.remove('ring', 'ring-warning', 'ring-offset-2');
+                        }
+                    }
+
+                    document.getElementById('setup-entry').textContent = signal.trade_setup.entry;
+                    const slEl2 = document.getElementById('setup-sl');
+                    if (slEl2) slEl2.textContent = signal.trade_setup.sl;
+                    document.getElementById('setup-target').textContent = signal.trade_setup.target;
+                } else {
+                    setupContainer.classList.add('opacity-50');
+                    document.getElementById('setup-contract').textContent = "NO SIGNAL";
+                    const rrBadge = document.getElementById('setup-rr');
+                    if (rrBadge) rrBadge.textContent = "-";
+                    document.getElementById('setup-entry').textContent = "-";
+                    const slEl = document.getElementById('setup-sl');
+                    if (slEl) slEl.textContent = "-";
+                    document.getElementById('setup-target').textContent = "-";
+                    // Clear rings
+                    if (slEl && slEl.parentElement) {
+                        slEl.parentElement.classList.remove('ring', 'ring-warning', 'ring-offset-2');
+                    }
+                }
+            }
+
+            if (sentEl) {
+                sentEl.textContent = signal.pcr_signal || 'NEUTRAL';
+                sentEl.className = 'stat-value text-lg ' +
+                    (signal.pcr_signal === 'BULLISH' ? 'text-success' :
+                        signal.pcr_signal === 'BEARISH' ? 'text-error' : 'text-warning');
+            }
+
+            if (reasonsEl && signal.reasons) {
+                reasonsEl.innerHTML = '';
+                signal.reasons.forEach(r => {
+                    const li = document.createElement('li');
+                    li.textContent = r;
+                    reasonsEl.appendChild(li);
+                });
+            }
+
+            // Update PCR Momentum Badge
+            const pcrBadge = document.getElementById('pcr-momentum-badge');
+            if (pcrBadge && signal.pcr_momentum) {
+                const pcrScore = signal.pcr_momentum.score;
+                const pcrReason = signal.pcr_momentum.reason;
+
+                // Extract short text like "SURGE +5%" or "STABLE"
+                let shortText = "PCR: STABLE";
+                let badgeClass = "badge-ghost";
+
+                if (pcrScore >= 20) {
+                    shortText = "PCR: SURGE 🟢";
+                    badgeClass = "badge-success text-white animate-pulse";
+                } else if (pcrScore >= 10) {
+                    shortText = "PCR: RISING 📈";
+                    badgeClass = "badge-success";
+                } else if (pcrScore <= -20) {
+                    shortText = "PCR: CRASH 🔴";
+                    badgeClass = "badge-error text-white animate-pulse";
+                } else if (pcrScore <= -10) {
+                    shortText = "PCR: FALLING 📉";
+                    badgeClass = "badge-error";
+                } else {
+                    // Extract ROC from reason if possible "Stable PCR (ROC: +0.00%)"
+                    const match = pcrReason.match(/ROC: ([+-]?\d+\.?\d*)%/);
+                    if (match) {
+                        shortText = `PCR: ${match[1]}%`;
+                    } else {
+                        shortText = "PCR: STABLE";
+                    }
+                    badgeClass = "badge-ghost";
+                }
+
+                pcrBadge.className = `badge ${badgeClass} badge-xs font-mono text-[10px]`;
+                pcrBadge.textContent = shortText;
+                pcrBadge.parentElement.setAttribute('data-tip', pcrReason); // Tooltip
+            }
+
+            // Warnings
+            const warningBanner = document.getElementById('quant-warning');
+            if (warningBanner && signal.warning) {
+                warningBanner.classList.remove('hidden');
+                const warningText = document.getElementById('quant-warning-text');
+                if (warningText) warningText.textContent = signal.warning;
+            } else if (warningBanner) {
+                warningBanner.classList.add('hidden');
+            }
+        }
+    }
+
+    // --- NEW: Strategy Mode Switcher ---
+    async function setStrategyMode(mode) {
+        // Optimistic UI update
+        const badge = document.getElementById('mode-badge');
+        if (badge) badge.textContent = mode + ' MODE ACTIVATING...';
+
+        try {
+            // We need the Session ID. It's in the URL or page context.
+            // For v7, we stored it in 'current_manager_id' variable if we did... 
+            // Let's assume we can get it from the URL or similar. 
+            // Actually, app.py expects session_id. 
+            // We don't have it easily here unless we embedded it.
+            // Workaround: The server knows the session associated with the stream? No.
+            // Let's parse it from the URL or assume we iterate active managers?
+            // Wait, destroy_session had issues too.
+            // Let's rely on the user having ONE active session usually. 
+            // But better: Store session_id in a global var when page loads?
+            // The URL is usually /trading/option-chain-v7/SESSION_ID
+
+            // v10 Logic: Use the global session ID we created
+            const sessionId = optionChainSessionId;
+            if (!sessionId) {
+                console.error("No active session ID found for mode switch");
+                alert("Session not active. Please wait or refresh.");
+                return;
+            }
+
+            const response = await fetch('/trading/api/option-chain-v10/set-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, mode: mode })
+            });
+
+            const data = await response.json();
+            if (data.status === 'success') {
+                if (badge) badge.textContent = mode + ' MODE ACTIVE';
+                // Update active class on buttons
+                const radios = document.getElementsByName('strategy_options');
+                for (const radio of radios) {
+                    if (radio.getAttribute('aria-label').toUpperCase() === mode) {
+                        radio.classList.add('btn-active');
+                    } else {
+                        radio.classList.remove('btn-active');
+                    }
+                }
+            } else {
+                alert('Error setting mode: ' + data.message);
+            }
+        } catch (error) {
+            console.error('Failed to set mode:', error);
+            alert('Connection error');
+        }
+    }
+
+    function updateOptionRow(option) {
+        // Convert strike to string to match HTML attribute
+        const strikeStr = String(option.strike);
+
+        // Find the row for this strike
+        const row = document.querySelector(`tr[data-strike="${option.strike}"]`) ||
+            document.querySelector(`tr[data-strike="${strikeStr}"]`);
+        if (!row) return;
+
+        const cells = row.querySelectorAll('td');
+
+        // Helper specifically for large Greek values (GEX)
+        const formatGex = (val) => {
+            const absolute = Math.abs(val);
+            if (absolute >= 10000000) return (val / 10000000).toFixed(2) + 'Cr';
+            if (absolute >= 1000000) return (val / 1000000).toFixed(1) + 'M';
+            if (absolute >= 1000) return (val / 1000).toFixed(0) + 'k';
+            return val.toFixed(0);
+        };
+
+        // Helper to update a cell with optional animation
+        const updateCell = (idx, newVal, formatter = v => v, animate = true) => {
+            const oldText = cells[idx].textContent.replace(/,/g, '');
+            const oldVal = parseFloat(oldText) || 0;
+            const formatted = formatter(newVal);
+            if (animate && oldVal !== newVal) {
+                cells[idx].textContent = formatted;
+                cells[idx].classList.add(newVal > oldVal ? 'price-up' : 'price-down');
+                setTimeout(() => cells[idx].classList.remove('price-up', 'price-down'), 1000);
+            } else {
+                cells[idx].textContent = formatted;
+            }
+        };
+
+        // CE side indices (Slimmed) - Shifted by +1 for Finding column
+        const FINDING = 0;
+        const CE_GEX = 1, CE_VEGA = 2, CE_THETA = 3, CE_GAMMA = 4, CE_DELTA = 5, CE_IV = 6;
+        const CE_OI = 7, CE_VOL = 8, CE_LTP = 9,
+            CE_OPEN = 10, CE_HIGH = 11, CE_LOW = 12, CE_CLOSE = 13, CE_AVG = 14,
+            CE_SPREAD = 15;
+
+        // Middle: CE Tag(16), Strike(17), PE Tag(18)
+
+        // PE side indices (Slimmed)
+        const PE_GEX = 19, PE_SPREAD = 20, PE_LTP = 21,
+            PE_OPEN = 22, PE_HIGH = 23, PE_LOW = 24, PE_CLOSE = 25, PE_AVG = 26,
+            PE_VOL = 27, PE_OI = 28;
+        // PE Greeks: 29-33
+        const PE_IV = 29, PE_DELTA = 30, PE_GAMMA = 31, PE_THETA = 32, PE_VEGA = 33;
+
+
+        // Update Findings (Icons)
+        const findingsCell = cells[FINDING].querySelector('.findings-cell');
+        if (findingsCell) {
+            let icons = [];
+
+            // Check for Gamma Wall
+            if (option.is_gamma_wall) {
+                icons.push('<span title="Gamma Wall">🧱</span>');
+            }
+
+            // Check for Institutional Flow (CE or PE)
+            if (option.ce_data.institutional_flow || option.pe_data.institutional_flow) {
+                const side = option.ce_data.institutional_flow ? 'CE' : 'PE';
+                icons.push(`<span title="Institutional Flow (${side})">🐋</span>`);
+            }
+
+            // Momentum is global, we'll check if this is ATM strike and momentum exists
+            // We'll add momentum icon via market_metrics in a separate update
+
+            findingsCell.innerHTML = icons.join(' ') || '<span class="opacity-30">-</span>';
+        }
+
+        // Update GEX
+        updateCell(CE_GEX, (option.ce_data.gex || 0), v => formatGex(v), false);
+        updateCell(PE_GEX, (option.pe_data.gex || 0), v => formatGex(v), false);
+
+
+        // Update CE Greeks
+        updateCell(CE_VEGA, option.ce_data.vega || 0, v => v.toFixed(2), false);
+        updateCell(CE_THETA, option.ce_data.theta || 0, v => v.toFixed(2), false);
+        updateCell(CE_GAMMA, option.ce_data.gamma || 0, v => v.toFixed(4), false);
+        updateCell(CE_DELTA, option.ce_data.delta || 0, v => v.toFixed(2), false);
+        updateCell(CE_IV, option.ce_data.iv || 0, v => v.toFixed(2), false);
+
+        // Update CE data with OI Change
+        const ceOiChange = option.ce_data.oi_change || 0;
+        const ceOiTotal = option.ce_data.oi || 0;
+        const ceOiChangeStr = ceOiChange > 0 ? `<span class="text-success text-xs">+${ceOiChange.toLocaleString()}</span>` :
+            ceOiChange < 0 ? `<span class="text-error text-xs">${ceOiChange.toLocaleString()}</span>` : '';
+        cells[CE_OI].innerHTML = `${ceOiTotal.toLocaleString()}<br>${ceOiChangeStr}`;
+
+        const ceOiCell = cells[CE_OI];
+        if (option.ce_data.oi_intensity > 0) {
+            const color = option.ce_data.oi_sentiment === 'build' ? '0, 255, 0' : '255, 165, 0';
+            ceOiCell.style.backgroundColor = `rgba(${color}, ${option.ce_data.oi_intensity * 0.3})`;
+        } else {
+            ceOiCell.style.backgroundColor = '';
+        }
+
+        updateCell(CE_VOL, option.ce_data.volume || 0, v => v.toLocaleString());
+        updateCell(CE_LTP, option.ce_data.ltp || 0, v => v.toFixed(2));
+        updateCell(CE_OPEN, option.ce_data.open || 0, v => v.toFixed(2));
+        updateCell(CE_HIGH, option.ce_data.high || 0, v => v.toFixed(2));
+        updateCell(CE_LOW, option.ce_data.low || 0, v => v.toFixed(2));
+        updateCell(CE_CLOSE, option.ce_data.close || 0, v => v.toFixed(2));
+        updateCell(CE_AVG, option.ce_data.avg_price || 0, v => v.toFixed(2));
+        updateCell(CE_SPREAD, option.ce_data.spread || 0, v => v.toFixed(2), false);
+
+
+        // Update PE data
+        updateCell(PE_SPREAD, option.pe_data.spread || 0, v => v.toFixed(2), false);
+        updateCell(PE_LTP, option.pe_data.ltp || 0, v => v.toFixed(2));
+        updateCell(PE_OPEN, option.pe_data.open || 0, v => v.toFixed(2));
+        updateCell(PE_HIGH, option.pe_data.high || 0, v => v.toFixed(2));
+        updateCell(PE_LOW, option.pe_data.low || 0, v => v.toFixed(2));
+        updateCell(PE_CLOSE, option.pe_data.close || 0, v => v.toFixed(2));
+        updateCell(PE_AVG, option.pe_data.avg_price || 0, v => v.toFixed(2));
+        updateCell(PE_VOL, option.pe_data.volume || 0, v => v.toLocaleString());
+
+        // Update PE OI with OI Change
+        const peOiChange = option.pe_data.oi_change || 0;
+        const peOiTotal = option.pe_data.oi || 0;
+        const peOiChangeStr = peOiChange > 0 ? `<span class="text-success text-xs">+${peOiChange.toLocaleString()}</span>` :
+            peOiChange < 0 ? `<span class="text-error text-xs">${peOiChange.toLocaleString()}</span>` : '';
+        cells[PE_OI].innerHTML = `${peOiTotal.toLocaleString()}<br>${peOiChangeStr}`;
+
+        const peOiCell = cells[PE_OI];
+        if (option.pe_data.oi_intensity > 0) {
+            const color = option.pe_data.oi_sentiment === 'build' ? '0, 255, 0' : '255, 165, 0';
+            peOiCell.style.backgroundColor = `rgba(${color}, ${option.pe_data.oi_intensity * 0.3})`;
+        } else {
+            peOiCell.style.backgroundColor = '';
+        }
+
+        // Update PE Greeks
+        updateCell(PE_IV, option.pe_data.iv || 0, v => v.toFixed(2), false);
+
+        // IV Status Apply
+        const ceIvCell = cells[CE_IV];
+        const peIvCell = cells[PE_IV];
+        [ceIvCell, peIvCell].forEach((cell, idx) => {
+            const sideData = idx === 0 ? option.ce_data : option.pe_data;
+            cell.classList.remove('bg-success/20', 'bg-error/20');
+            if (sideData.iv_status === 'cheap') cell.classList.add('bg-success/20');
+            else if (sideData.iv_status === 'expensive') cell.classList.add('bg-error/20');
+        });
+        updateCell(PE_DELTA, option.pe_data.delta || 0, v => v.toFixed(2), false);
+        updateCell(PE_GAMMA, option.pe_data.gamma || 0, v => v.toFixed(4), false);
+        updateCell(PE_THETA, option.pe_data.theta || 0, v => v.toFixed(2), false);
+        updateCell(PE_VEGA, option.pe_data.vega || 0, v => v.toFixed(2), false);
+
+        // Update Gamma Wall marker (Strike is at index 17)
+        // Use DOM API instead of innerHTML += to prevent re-parsing all child nodes
+        const strikeCell = cells[17];
+        if (option.is_gamma_wall) {
+            if (!strikeCell.querySelector('.animate-pulse')) {
+                const wallDiv = document.createElement('div');
+                wallDiv.className = 'absolute -top-1 -right-1';
+                wallDiv.innerHTML = '<span class="badge badge-error badge-xs p-0 w-3 h-3 border-none animate-pulse" title="GAMMA WALL"></span>';
+                strikeCell.appendChild(wallDiv);
+            }
+        } else {
+            const wall = strikeCell.querySelector('.absolute');
+            if (wall) wall.remove();
+        }
+    }
+
+    function refreshOptionChain() {
+        const underlying = document.getElementById('underlyingSelect').value;
+        const expiry = document.getElementById('expirySelect').value;
+
+        window.location.href = `/trading/option-chain-v10?underlying=${underlying}&expiry=${expiry}`;
+    }
+
+    // ==================== SESSION MANAGEMENT FOR ON-DEMAND WEBSOCKET ====================
+
+    async function createOptionChainSession() {
+        const underlying = document.getElementById('underlyingSelect').value;
+        const expiry = document.getElementById('expirySelect').value;
+
+        if (!expiry) {
+            console.log('[SESSION] No expiry selected, skipping session creation');
+            return;
+        }
+
+        try {
+            console.log(`[SESSION] Creating v10 session for ${underlying} ${expiry}...`);
+
+            const response = await fetch('/trading/api/option-chain-session/create-v10', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    underlying: underlying,
+                    expiry: expiry
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                optionChainSessionId = data.session_id;
+                console.log(`[SESSION] Created session ${optionChainSessionId}, subscribed to ${data.subscribed_symbols} symbols`);
+
+                // Start heartbeat (every 30 seconds)
+                startHeartbeat();
+            } else {
+                console.error('[SESSION] Failed to create session:', data.message);
+            }
+        } catch (error) {
+            console.error('[SESSION] Error creating session:', error);
+        }
+    }
+
+    function startHeartbeat() {
+        // Clear existing heartbeat if any
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+        }
+
+        // Send heartbeat every 30 seconds
+        heartbeatInterval = setInterval(async () => {
+            if (!optionChainSessionId) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/trading/api/option-chain-session/heartbeat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: optionChainSessionId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    console.log('[SESSION] Heartbeat sent successfully');
+                } else {
+                    console.warn('[SESSION] Heartbeat failed:', data.message);
+                    // Session may have expired, stop heartbeat
+                    clearInterval(heartbeatInterval);
+                    heartbeatInterval = null;
+                    optionChainSessionId = null;
+                }
+            } catch (error) {
+                console.error('[SESSION] Error sending heartbeat:', error);
+            }
+        }, 30000);  // 30 seconds
+
+        console.log('[SESSION] Heartbeat started (30-second interval)');
+    }
+
+    async function destroyOptionChainSession() {
+        if (!optionChainSessionId) {
+            return;
+        }
+
+        try {
+            console.log(`[SESSION] Destroying session ${optionChainSessionId}...`);
+
+            // Stop heartbeat
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+
+            // Destroy session on server
+            const response = await fetch('/trading/api/option-chain-session/destroy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: optionChainSessionId
+                })
+            });
+
+            const data = await response.json();
+            console.log('[SESSION] Session destroyed:', data.message);
+
+            optionChainSessionId = null;
+        } catch (error) {
+            console.error('[SESSION] Error destroying session:', error);
+        }
+    }
+
+    // Cleanup on page unload - destroy session to free server-side WebSocket subscriptions
+    window.addEventListener('beforeunload', function () {
+        // Use sendBeacon for reliable delivery during page unload (fire-and-forget)
+        // This prevents orphaned sessions that keep WebSocket subscriptions alive
+        if (optionChainSessionId) {
+            const data = JSON.stringify({ session_id: optionChainSessionId });
+            navigator.sendBeacon('/trading/api/option-chain-session/destroy', data);
+        }
+
+        // Close EventSource
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        // Clear heartbeat
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+        }
+    });
+</script>
+{% endblock %}

@@ -120,12 +120,22 @@ class ProfessionalWebSocketManager:
                     handler(market_data)
                 except Exception as e:
                     logger.error(f"Error in depth handler: {e}")
-        elif mode == 'quote':
+        elif mode == 'quote' or mode == 'ltp':
+            # Both 'quote' and 'ltp' packets should go to quote_handlers
+            # because OptionChainManagers use 'quote' handler to pick up underlying LTP
             for handler in self.quote_handlers:
                 try:
                     handler(market_data)
                 except Exception as e:
                     logger.error(f"Error in quote handler: {e}")
+            
+            # Also notify dedicated LTP handlers if any
+            if mode == 'ltp':
+                for handler in self.ltp_handlers:
+                    try:
+                        handler(market_data)
+                    except Exception as e:
+                        logger.error(f"Error in ltp handler: {e}")
     
     def on_error(self, ws, error):
         logger.error(f"WebSocket error: {error}")
@@ -136,14 +146,18 @@ class ProfessionalWebSocketManager:
         
     def subscribe(self, subscription):
         """Subscribe to symbol"""
+        # Always record subscription for resubscription logic
+        sub_str = json.dumps(subscription)
+        self.subscriptions.add(sub_str)
+        
         if not self.ws or not self.authenticated:
-            logger.warning("WebSocket not ready for subscription")
+            logger.warning(f"WebSocket not ready for subscription to {subscription.get('symbol')}. Queued.")
             return False
             
         symbol = subscription.get('symbol')
         exchange = subscription.get('exchange')
         mode = subscription.get('mode', 'ltp')
-        
+        # print(symbol, exchange, mode)
         # Map mode to number
         mode_map = {'ltp': 1, 'quote': 2, 'depth': 3}
         mode_num = mode_map.get(mode, 1)
@@ -156,10 +170,13 @@ class ProfessionalWebSocketManager:
             'depth': 5
         }
         
-        self.ws.send(json.dumps(message))
-        self.subscriptions.add(json.dumps(subscription))
-        time.sleep(0.05)
-        return True
+        try:
+            self.ws.send(json.dumps(message))
+            time.sleep(0.05)
+            return True
+        except Exception as e:
+            logger.error(f"Error sending subscription: {e}")
+            return False
         
     def subscribe_batch(self, instruments, mode='ltp'):
         """Batch subscribe"""
@@ -177,9 +194,22 @@ class ProfessionalWebSocketManager:
             
     def register_handler(self, mode, handler):
         """Register data handler"""
-        if mode == 'quote':
+        if mode == 'quote' and handler not in self.quote_handlers:
             self.quote_handlers.append(handler)
-        elif mode == 'depth':
+        elif mode == 'depth' and handler not in self.depth_handlers:
             self.depth_handlers.append(handler)
-        elif mode == 'ltp':
+        elif mode == 'ltp' and handler not in self.ltp_handlers:
             self.ltp_handlers.append(handler)
+
+    def unregister_handler(self, mode, handler):
+        """Unregister data handler"""
+        try:
+            if mode == 'quote' and handler in self.quote_handlers:
+                self.quote_handlers.remove(handler)
+            elif mode == 'depth' and handler in self.depth_handlers:
+                self.depth_handlers.remove(handler)
+            elif mode == 'ltp' and handler in self.ltp_handlers:
+                self.ltp_handlers.remove(handler)
+        except Exception:
+            pass
+

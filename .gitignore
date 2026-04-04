@@ -154,3 +154,6 @@ cython_debug/
 # Node.js
 node_modules/
 package-lock.json
+
+# Logs
+logs/

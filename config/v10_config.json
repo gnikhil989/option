@@ -1,0 +1,110 @@
+{
+    "strategies": {
+        "allowed": [
+            "LONG_CE",
+            "LONG_PE",
+            "SHORT_CE",
+            "SHORT_PE",
+            "SHORT_STRADDLE",
+            "LONG_STRADDLE",
+            "SHORT_STRANGLE",
+            "LONG_STRANGLE"
+        ],
+        "matrix": {
+            "LONG_STRADDLE": {
+                "score_range": [
+                    -10,
+                    10
+                ],
+                "min_iv_percentile": 20,
+                "condition": "HIGH_MOMENTUM_EXPECTED",
+                "description": "Neutral score but expectation of big move (breakout)"
+            },
+            "SHORT_STRADDLE": {
+                "score_range": [
+                    -15,
+                    15
+                ],
+                "max_iv_percentile": 60,
+                "condition": "LOW_MOMENTUM",
+                "description": "Range bound market, eating theta"
+            },
+            "LONG_STRANGLE": {
+                "score_range": [
+                    -10,
+                    10
+                ],
+                "min_iv_percentile": 20,
+                "condition": "EXTREME_MOMENTUM_EXPECTED",
+                "description": "Cheaper version of Straddle for massive breakouts"
+            },
+            "SHORT_STRANGLE": {
+                "score_range": [
+                    -20,
+                    20
+                ],
+                "max_iv_percentile": 70,
+                "condition": "LOW_MOMENTUM",
+                "description": "Safer range bound strategy with wider breakevens"
+            },
+            "LONG_CE": {
+                "min_score": 25,
+                "condition": "momentum > 0",
+                "description": "Strong Bullish Bias"
+            },
+            "LONG_PE": {
+                "max_score": -25,
+                "condition": "momentum < 0",
+                "description": "Strong Bearish Bias"
+            },
+            "SHORT_PE": {
+                "min_score": 10,
+                "max_score": 30,
+                "condition": "iv_stable_or_dropping",
+                "description": "Mildly Bullish/Neutral - Theta Play"
+            },
+            "SHORT_CE": {
+                "max_score": -10,
+                "min_score": -30,
+                "condition": "iv_stable_or_dropping",
+                "description": "Mildly Bearish/Neutral - Theta Play"
+            }
+        }
+    },
+    "risk": {
+        "sl_pct": 15,
+        "target_pct": 30,
+        "max_trades_per_day": 5,
+        "daily_loss_limit": 5000,
+        "capital_per_trade": 50000
+    },
+    "trailing": {
+        "enabled": true,
+        "trigger_pct": 20,
+        "callback_pct": 10,
+        "description": "Start trailing when 20% profit reached. Trail distance is 10% from peak."
+    },
+    "timers": {
+        "entry_cooldown_seconds": 60,
+        "exit_cooldown_seconds": 60,
+        "min_warmup_seconds": 180,
+        "regime_lock_minutes": 15
+    },
+    "scoring": {
+        "weights": {
+            "delta_oi": 1.5,
+            "gamma": 1.2,
+            "momentum": 1.2,
+            "iv_skew": 0.8,
+            "pcr_roc": 1.0,
+            "oi_unwind": 1.0,
+            "inst_flow": 1.5
+        },
+        "description": "Multipliers for raw score calculation"
+    },
+    "entry": {
+        "min_confidence": 60,
+        "aggregation_window_seconds": 180,
+        "min_samples": 30
+    }
+}
