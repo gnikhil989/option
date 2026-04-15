@@ -1927,10 +1927,11 @@ class OptionChainManagerV10Safe:
                 logger.info(f"[V10-ATM] Mismatch ongoing: chain={self._chain_atm} calc={calculated_atm} elapsed={elapsed:.0f}s / 60s")
                 self._last_mismatch_log = now
 
-            # Check if mismatch persisted for 60 seconds
+            # Check if mismatch persisted for 60 seconds → regenerate chain
             if elapsed >= 60:
-                logger.warning(f"[V10-ATM] 60s reached! chain={self._chain_atm} → new={calculated_atm}. Setting regeneration_needed=True")
-                self._regeneration_needed = True
+                logger.warning(f"[V10-ATM] 60s reached! chain={self._chain_atm} → new={calculated_atm}. Regenerating chain now.")
+                self._do_chain_regeneration()
+                self._regeneration_needed = True  # Signal UI to refresh display
 
             self.update_option_tags()
             return
